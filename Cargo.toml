@@ -47,5 +47,9 @@ name = "inferno-collapse-perf"
 path = "src/bin/collapse-perf.rs"
 
 [[bin]]
+name = "inferno-collapse-xdebug"
+path = "src/bin/collapse-xdebug.rs"
+
+[[bin]]
 name = "inferno-flamegraph"
 path = "src/bin/flamegraph.rs"
