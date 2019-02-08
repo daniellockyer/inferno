@@ -16,13 +16,9 @@ use inferno::collapse::xdebug::{handle_file, Options};
     If you save this output add --header on Linux >= 3.14 to include perf info."
 )]
 struct Opt {
-    /// Weight by time
-    #[structopt(long = "time")]
-    time_weighting: bool,
-
     /// Measure by invocation counts
-    #[structopt(long = "tid")]
-    invocation_count_only: bool,
+    #[structopt(long = "c")]
+    invocation_count: bool,
 
     /// perf script output file, or STDIN if not specified
     infile: Option<String>,
@@ -31,8 +27,7 @@ struct Opt {
 impl Into<Options> for Opt {
     fn into(self) -> Options {
         Options {
-            time_weighting: self.time_weighting,
-            invocation_count_only: self.invocation_count_only,
+            invocation_count: self.invocation_count,
         }
     }
 }

@@ -7,11 +7,8 @@ static CALLS: &[&str] = &["require", "require_once", "include", "include_once"];
 
 #[derive(Debug, Default)]
 pub struct Options {
-    /// include PID with process names [1]
-    pub time_weighting: bool,
-
     /// include TID and PID with process names [1]
-    pub invocation_count_only: bool,
+    pub invocation_count: bool,
 }
 
 pub fn handle_file<R: BufRead, W: Write>(
@@ -25,7 +22,7 @@ pub fn handle_file<R: BufRead, W: Write>(
     let mut prev_start_time = 0.0;
     let mut line = String::new();
 
-    let time_weighting = !opts.time_weighting;
+    let invocation_count = !opts.invocation_count;
 
     loop {
         if reader.read_line(&mut line)? == 0 {
@@ -62,7 +59,7 @@ pub fn handle_file<R: BufRead, W: Write>(
         };
 
         if is_exit {
-            if time_weighting {
+            if invocation_count  {
                 if current_stack.is_empty() {
                     println!("[WARNING] Found function exit without corresponding entrance. Discarding line. Check your input.\n");
                     continue;
@@ -84,7 +81,7 @@ pub fn handle_file<R: BufRead, W: Write>(
         } else {
             let mut func_name = parts[5].to_owned();
 
-            if time_weighting {
+            if invocation_count {
                 if CALLS.contains(&parts[5]) {
                     func_name.push_str(&format!("({})", parts[7]));
                 }
