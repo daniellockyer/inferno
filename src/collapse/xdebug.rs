@@ -59,7 +59,7 @@ pub fn handle_file<R: BufRead, W: Write>(
         };
 
         if is_exit {
-            if invocation_count  {
+            if invocation_count {
                 if current_stack.is_empty() {
                     println!("[WARNING] Found function exit without corresponding entrance. Discarding line. Check your input.\n");
                     continue;
