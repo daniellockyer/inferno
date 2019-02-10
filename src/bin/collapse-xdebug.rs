@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::{self, BufReader};
+use std::io::{self, BufReader, BufWriter};
 use structopt::StructOpt;
 
 use inferno::collapse::xdebug::{handle_file, Options};
@@ -38,15 +38,19 @@ fn main() -> io::Result<()> {
         (opt.infile.clone(), opt.into())
     };
 
+    let stdout = io::stdout();
+    let stdout = stdout.lock();
+    let write_buffer = BufWriter::new(stdout);
+
     match infile {
         Some(ref f) => {
             let r = BufReader::with_capacity(128 * 1024, File::open(f)?);
-            handle_file(options, r, io::stdout().lock())
+            handle_file(options, r, write_buffer)
         }
         None => {
             let stdin = io::stdin();
             let r = BufReader::with_capacity(128 * 1024, stdin.lock());
-            handle_file(options, r, io::stdout().lock())
+            handle_file(options, r, write_buffer)
         }
     }
 }
