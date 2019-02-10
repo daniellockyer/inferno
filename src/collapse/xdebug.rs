@@ -68,7 +68,6 @@ pub fn handle_file<R: BufRead, W: Write>(
                 let collapsed = current_stack.join(";");
                 let duration = SCALE_FACTOR * (time - prev_start_time);
                 *stacks.entry(collapsed).or_insert(0.0) += duration;
-
             } else {
                 if !was_exit {
                     let collapsed = current_stack.join(";");
