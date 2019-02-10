@@ -69,15 +69,14 @@ pub fn handle_file<R: BufRead, W: Write>(
                 let duration = SCALE_FACTOR * (time - prev_start_time);
                 *stacks.entry(collapsed).or_insert(0.0) += duration;
 
-                current_stack.pop();
             } else {
                 if !was_exit {
                     let collapsed = current_stack.join(";");
                     *stacks.entry(collapsed).or_insert(0.0) += 1.0;
                 }
-                current_stack.pop();
                 was_exit = true;
             }
+            current_stack.pop();
         } else {
             let mut func_name = parts[5].to_owned();
 
