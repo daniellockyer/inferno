@@ -136,14 +136,14 @@ impl CallStack {
 
     fn call_without_path(&mut self, name: &str) {
         let (map, interned) = (&mut self.without_path, &mut self.interned);
-        let unique = map.entry(name.into())
-            .or_insert_with(move || {
-                let index = interned.len();
-                interned.push(Call::without_path(name));
-                index
-            });
-        self.stack.push(*unique)
+        if let Some(unique) = map.get(name) {
+            return self.stack.push(*unique)
+        }
 
+        let index = interned.len();
+        interned.push(Call::without_path(name));
+        map.insert(name.into(), index);
+        self.stack.push(index)
     }
 
     fn pop(&mut self) {
