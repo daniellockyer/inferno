@@ -1,7 +1,9 @@
 use hashbrown::HashMap;
+use hashbrown::hash_map::RawEntryMut;
 use std::fmt;
 use std::io::{self, Write};
 use std::io::prelude::*;
+use std::hash::{BuildHasher, Hash, Hasher};
 use std::rc::Rc;
 use regex::Regex;
 
@@ -179,14 +181,22 @@ impl CallStack {
     ///
     /// `Ok` when the string was already present.
     fn intern_str(&mut self, string: &str) -> Interned<Str> {
-        if let Some(&idx) = self.strings.get(string) {
-            return Interned::Old(Str(idx))
-        }
+        let mut hasher = self.strings.hasher().build_hasher();
+        string.hash(&mut hasher);
+        let hash = hasher.finish();
+
+        let entry = self.strings.raw_entry_mut()
+            .from_key_hashed_nocheck(hash, string);
+
+        let vacant = match entry {
+            RawEntryMut::Occupied(occ) => return Interned::Old(Str(*occ.get())),
+            RawEntryMut::Vacant(vacant) => vacant,
+        };
 
         let index = self.interned_string.len();
         let element: Rc<str> = Rc::from(string);
         self.interned_string.push(element.clone());
-        self.strings.insert(element, index);
+        vacant.insert_hashed_nocheck(hash, element, index);
         Interned::New(Str(index))
     }
 
