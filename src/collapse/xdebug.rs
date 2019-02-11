@@ -1,6 +1,7 @@
 use hashbrown::HashMap;
 use std::fmt::Write as WriteFmt;
 use std::io::{self, Write};
+use regex::Regex;
 use std::io::prelude::*;
 
 const SCALE_FACTOR: f32 = 1_000_000.0;
@@ -10,8 +11,6 @@ pub struct Options;
 
 #[derive(PartialEq, Eq, Hash)]
 struct Call(String);
-
-struct CallTime(String, f32);
 
 #[derive(Default)]
 struct CallStack {
@@ -26,17 +25,20 @@ pub fn handle_file<R: BufRead, W: Write>(
     mut reader: R,
     mut writer: W,
 ) -> io::Result<()> {
-    let mut stacks: HashMap<_, CallTime> = HashMap::new();
+    let mut stacks: HashMap<_, f32> = HashMap::new();
     let mut current_stack = CallStack::default();
     let mut prev_start_time = 0.0;
     let mut line = String::new();
+
+    let searcher = Regex::new("TRACE START").unwrap();
+    let end_searcher = Regex::new("TRACE END").unwrap();
 
     loop {
         if reader.read_line(&mut line)? == 0 {
             break;
         }
 
-        if line.contains("TRACE START") {
+        if searcher.is_match(&line) {
             break;
         }
 
@@ -47,6 +49,10 @@ pub fn handle_file<R: BufRead, W: Write>(
         line.clear();
 
         if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+
+        if end_searcher.is_match(&line) {
             break;
         }
 
@@ -76,9 +82,9 @@ pub fn handle_file<R: BufRead, W: Write>(
             let current = current_stack.current();
             let duration = SCALE_FACTOR * (time - prev_start_time);
             if let Some(call_time) = stacks.get_mut(current) {
-                call_time.1 += duration;
+                *call_time += duration;
             } else {
-                stacks.insert(current.to_vec().into_boxed_slice(), CallTime(current_stack.make_name(), duration));
+                stacks.insert(current.to_vec().into_boxed_slice(), duration);
             }
         }
 
@@ -100,8 +106,10 @@ pub fn handle_file<R: BufRead, W: Write>(
         prev_start_time = time;
     }
 
-    for CallTime(key, value) in stacks.values() {
-        writeln!(writer, "{} {}", key, value)?;
+    for (key, value) in stacks {
+        line.clear();
+        current_stack.write_name(&key, &mut line);
+        writeln!(writer, "{} {}", &line, value)?;
     }
 
     Ok(())
@@ -161,15 +169,13 @@ impl CallStack {
     /// Create a name for the current stack.
     ///
     /// This is potentially costly.
-    fn make_name(&self) -> String {
-        let mut buffer = String::new();
-        let mut indices = self.current().iter().cloned();
+    fn write_name(&self, indices: &[usize], buffer: &mut String) {
+        let mut indices = indices.iter().cloned();
         if let Some(first) = indices.by_ref().next() {
             buffer.push_str(self.interned[first].display_name());
         }
         while let Some(next) = indices.next() {
-            write!(&mut buffer, ";{}", self.interned[next].display_name()).unwrap();
+            write!(buffer, ";{}", self.interned[next].display_name()).unwrap();
         }
-        buffer
     }
 }
