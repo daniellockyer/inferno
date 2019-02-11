@@ -18,7 +18,8 @@ pub fn handle_file<R: BufRead, W: Write>(
     let mut prev_start_time = 0.0;
     let mut line = String::new();
 
-    let searcher = Regex::new("TRACE_START").unwrap();
+    let searcher = Regex::new("TRACE START").unwrap();
+    let end_searcher = Regex::new("TRACE END").unwrap();
 
     loop {
         if reader.read_line(&mut line)? == 0 {
@@ -36,6 +37,10 @@ pub fn handle_file<R: BufRead, W: Write>(
         line.clear();
 
         if reader.read_line(&mut line)? == 0 {
+            break;
+        }
+
+        if end_searcher.is_match(&line) {
             break;
         }
 
