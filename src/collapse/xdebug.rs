@@ -1,22 +1,37 @@
 use hashbrown::HashMap;
-use std::fmt::Write as WriteFmt;
 use std::io::{self, Write};
-use regex::Regex;
 use std::io::prelude::*;
+use std::rc::Rc;
+use regex::Regex;
 
 const SCALE_FACTOR: f32 = 1_000_000.0;
 static CALLS: &[&str] = &["require", "require_once", "include", "include_once"];
 
 pub struct Options;
 
-#[derive(PartialEq, Eq, Hash)]
-struct Call(String);
+/// A unique key for an interned string.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Str(usize);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Call {
+    WithPath(Str, Str),
+    WithoutPath(Str),
+}
+
+enum Interned<T> {
+    Old(T),
+    New(T),
+}
 
 #[derive(Default)]
 struct CallStack {
-    with_path: HashMap<(String, String), usize>,
-    without_path: HashMap<String, usize>,
+    strings: HashMap<Rc<str>, usize>,
+    interned_string: Vec<Rc<str>>,
+
+    calls: HashMap<Call, usize>,
     interned: Vec<Call>,
+
     stack: Vec<usize>,
 }
 
@@ -26,7 +41,7 @@ pub fn handle_file<R: BufRead, W: Write>(
     mut writer: W,
 ) -> io::Result<()> {
     let mut stacks: HashMap<_, f32> = HashMap::new();
-    let mut current_stack = CallStack::default();
+    let mut current_stack = CallStack::new();
     let mut prev_start_time = 0.0;
     let mut line = String::new();
 
@@ -95,11 +110,7 @@ pub fn handle_file<R: BufRead, W: Write>(
             let path_name = parts.by_ref().skip(1).next();
 
             if let (Some(func_name), Some(path_name)) = (func_name, path_name) {
-                if CALLS.contains(&func_name) {
-                    current_stack.call_with_path(func_name, path_name);
-                } else {
-                    current_stack.call_without_path(func_name);
-                }
+                current_stack.call(func_name, path_name);
             }
         }
 
@@ -115,43 +126,37 @@ pub fn handle_file<R: BufRead, W: Write>(
     Ok(())
 }
 
-impl Call {
-    fn with_path(name: &str, path: &str) -> Self {
-        Call(format!("{}({})", name, path))
-    }
-
-    fn without_path(name: &str) -> Self {
-        Call(format!("{}", name))
-    }
-
-    fn display_name(&self) -> &str {
-        &self.0
-    }
-}
-
 impl CallStack {
-    fn call_with_path(&mut self, name: &str, path: &str) {
-        let entry_key = (name.into(), path.into());
-        let (map, interned) = (&mut self.with_path, &mut self.interned);
-        let unique = map.entry(entry_key)
-            .or_insert_with(move || {
-                let index = interned.len();
-                interned.push(Call::with_path(name, path));
-                index
-            });
-        self.stack.push(*unique)
+    fn new() -> Self {
+        CallStack {
+            strings: CALLS.iter()
+                .enumerate()
+                .map(|(idx, name)| (name.to_owned().into(), idx))
+                .collect(),
+            interned_string: CALLS.iter()
+                .cloned()
+                .map(Rc::from)
+                .collect(),
+            calls: HashMap::new(),
+            interned: Vec::new(),
+            stack: Vec::with_capacity(16),
+        }
     }
 
-    fn call_without_path(&mut self, name: &str) {
-        let (map, interned) = (&mut self.without_path, &mut self.interned);
-        if let Some(unique) = map.get(name) {
-            return self.stack.push(*unique)
-        }
+    fn call(&mut self, name: &str, path: &str) {
+        let new_or_not = match self.intern_str(name) {
+            Interned::Old(st @ Str(0..=4)) => {
+                match self.intern_str(path) {
+                    Interned::Old(other) => Interned::Old(Call::WithPath(st, other)),
+                    Interned::New(new) => Interned::New(Call::WithPath(st, new)),
+                }
+            },
+            Interned::Old(other) => Interned::Old(Call::WithoutPath(other)),
+            Interned::New(new) => Interned::New(Call::WithoutPath(new)),
+        };
 
-        let index = interned.len();
-        interned.push(Call::without_path(name));
-        map.insert(name.into(), index);
-        self.stack.push(index)
+        let idx = self.intern(new_or_not);
+        self.stack.push(idx)
     }
 
     fn pop(&mut self) {
@@ -172,10 +177,58 @@ impl CallStack {
     fn write_name(&self, indices: &[usize], buffer: &mut String) {
         let mut indices = indices.iter().cloned();
         if let Some(first) = indices.by_ref().next() {
-            buffer.push_str(self.interned[first].display_name());
+            self.write_call(self.interned[first], buffer);
         }
         while let Some(next) = indices.next() {
-            write!(buffer, ";{}", self.interned[next].display_name()).unwrap();
+            buffer.push(';');
+            self.write_call(self.interned[next], buffer);
+        }
+    }
+
+    /// Intern a string, return the unique index.
+    ///
+    /// `Ok` when the string was already present.
+    fn intern_str(&mut self, string: &str) -> Interned<Str> {
+        if let Some(&idx) = self.strings.get(string) {
+            return Interned::Old(Str(idx))
+        }
+
+        let index = self.interned_string.len();
+        let element: Rc<str> = Rc::from(string);
+        self.interned_string.push(element.clone());
+        self.strings.insert(element, index);
+        Interned::New(Str(index))
+    }
+
+    fn intern(&mut self, call: Interned<Call>) -> usize {
+        let new = match call {
+            // The strings were not seen before, definitely new.
+            Interned::New(t) => t,
+            // The strings used were seen before, but maybe not in this call. So retest.
+            Interned::Old(t) => if let Some(idx) = self.calls.get(&t) {
+                return *idx;
+            } else {
+                t
+            }
+        };
+
+        let index = self.interned.len();
+        self.interned.push(new);
+        self.calls.insert(new, index);
+        index
+    }
+
+    fn write_call(&self, call: Call, buffer: &mut String) {
+        match call {
+            Call::WithoutPath(Str(idx)) => buffer.push_str(&self.interned_string[idx]),
+            Call::WithPath(Str(name), Str(path)) => {
+                let (name, path) = (&self.interned_string[name], &self.interned_string[path]);
+                buffer.reserve(name.len() + path.len() + 2);
+                buffer.push_str(name);
+                buffer.push('(');
+                buffer.push_str(path);
+                buffer.push(')');
+            },
         }
     }
 }
