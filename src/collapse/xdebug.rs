@@ -1,5 +1,6 @@
 use hashbrown::HashMap;
-use std::io;
+use std::fmt::Write as WriteFmt;
+use std::io::{self, Write};
 use std::io::prelude::*;
 
 const SCALE_FACTOR: f32 = 1_000_000.0;
@@ -7,13 +8,26 @@ static CALLS: &[&str] = &["require", "require_once", "include", "include_once"];
 
 pub struct Options;
 
+#[derive(PartialEq, Eq, Hash)]
+struct Call(String);
+
+struct CallTime(String, f32);
+
+#[derive(Default)]
+struct CallStack {
+    with_path: HashMap<(String, String), usize>,
+    without_path: HashMap<String, usize>,
+    interned: Vec<Call>,
+    stack: Vec<usize>,
+}
+
 pub fn handle_file<R: BufRead, W: Write>(
     _opts: Options,
     mut reader: R,
     mut writer: W,
 ) -> io::Result<()> {
-    let mut stacks: HashMap<String, f32> = HashMap::new();
-    let mut current_stack = Vec::with_capacity(16);
+    let mut stacks: HashMap<_, CallTime> = HashMap::new();
+    let mut current_stack = CallStack::default();
     let mut prev_start_time = 0.0;
     let mut line = String::new();
 
@@ -58,9 +72,15 @@ pub fn handle_file<R: BufRead, W: Write>(
             continue;
         }
 
-        let collapsed = current_stack.join(";");
-        let duration = SCALE_FACTOR * (time - prev_start_time);
-        *stacks.entry(collapsed).or_insert(0.0) += duration;
+        {
+            let current = current_stack.current();
+            let duration = SCALE_FACTOR * (time - prev_start_time);
+            if let Some(call_time) = stacks.get_mut(current) {
+                call_time.1 += duration;
+            } else {
+                stacks.insert(current.to_vec().into_boxed_slice(), CallTime(current_stack.make_name(), duration));
+            }
+        }
 
         if is_exit {
             current_stack.pop();
@@ -70,9 +90,9 @@ pub fn handle_file<R: BufRead, W: Write>(
 
             if let (Some(func_name), Some(path_name)) = (func_name, path_name) {
                 if CALLS.contains(&func_name) {
-                    current_stack.push(format!("{}({})", func_name.clone(), path_name.clone()));
+                    current_stack.call_with_path(func_name, path_name);
                 } else {
-                    current_stack.push(format!("{}", func_name.clone()));
+                    current_stack.call_without_path(func_name);
                 }
             }
         }
@@ -80,9 +100,76 @@ pub fn handle_file<R: BufRead, W: Write>(
         prev_start_time = time;
     }
 
-    for (key, value) in stacks {
+    for CallTime(key, value) in stacks.values() {
         writeln!(writer, "{} {}", key, value)?;
     }
 
     Ok(())
+}
+
+impl Call {
+    fn with_path(name: &str, path: &str) -> Self {
+        Call(format!("{}({})", name, path))
+    }
+
+    fn without_path(name: &str) -> Self {
+        Call(format!("{}", name))
+    }
+
+    fn display_name(&self) -> &str {
+        &self.0
+    }
+}
+
+impl CallStack {
+    fn call_with_path(&mut self, name: &str, path: &str) {
+        let entry_key = (name.into(), path.into());
+        let (map, interned) = (&mut self.with_path, &mut self.interned);
+        let unique = map.entry(entry_key)
+            .or_insert_with(move || {
+                let index = interned.len();
+                interned.push(Call::with_path(name, path));
+                index
+            });
+        self.stack.push(*unique)
+    }
+
+    fn call_without_path(&mut self, name: &str) {
+        let (map, interned) = (&mut self.without_path, &mut self.interned);
+        let unique = map.entry(name.into())
+            .or_insert_with(move || {
+                let index = interned.len();
+                interned.push(Call::without_path(name));
+                index
+            });
+        self.stack.push(*unique)
+
+    }
+
+    fn pop(&mut self) {
+        self.stack.pop();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.stack.is_empty()
+    }
+
+    fn current(&self) -> &[usize] {
+        self.stack.as_slice()
+    }
+
+    /// Create a name for the current stack.
+    ///
+    /// This is potentially costly.
+    fn make_name(&self) -> String {
+        let mut buffer = String::new();
+        let mut indices = self.current().iter().cloned();
+        if let Some(first) = indices.by_ref().next() {
+            buffer.push_str(self.interned[first].display_name());
+        }
+        while let Some(next) = indices.next() {
+            write!(&mut buffer, ";{}", self.interned[next].display_name()).unwrap();
+        }
+        buffer
+    }
 }
