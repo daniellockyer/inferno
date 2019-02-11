@@ -1,5 +1,6 @@
 use hashbrown::HashMap;
 use std::io;
+use regex::Regex;
 use std::io::prelude::*;
 
 const SCALE_FACTOR: f32 = 1_000_000.0;
@@ -17,12 +18,14 @@ pub fn handle_file<R: BufRead, W: Write>(
     let mut prev_start_time = 0.0;
     let mut line = String::new();
 
+    let searcher = Regex::new("TRACE_START").unwrap();
+
     loop {
         if reader.read_line(&mut line)? == 0 {
             break;
         }
 
-        if line.contains("TRACE START") {
+        if searcher.is_match(&line) {
             break;
         }
 
