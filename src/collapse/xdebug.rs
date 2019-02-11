@@ -104,10 +104,14 @@ pub fn handle_file<R: BufRead, W: Write>(
         {
             let current = current_stack.current();
             let duration = SCALE_FACTOR * (time - prev_start_time);
-            if let Some(call_time) = stacks.get_mut(current) {
-                *call_time += duration;
-            } else {
-                stacks.insert(current.to_vec().into_boxed_slice(), duration);
+
+            let mut hasher = stacks.hasher().build_hasher();
+            current.hash(&mut hasher);
+            let hash = hasher.finish();
+
+            match stacks.raw_entry_mut().from_key_hashed_nocheck(hash, current) {
+                RawEntryMut::Occupied(mut occ) => *occ.get_mut() += duration,
+                RawEntryMut::Vacant(vacant) => { vacant.insert_hashed_nocheck(hash, Box::from(current), duration); },
             }
         }
 
