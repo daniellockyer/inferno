@@ -38,19 +38,20 @@ pub fn handle_file<R: BufRead, W: Write>(
 
         let mut parts = line.split_whitespace().into_iter().skip(2);
 
-        let (is_exit, time) = if let (Some(is_exit), Some(time)) = (parts.by_ref().next(), parts.by_ref().next()) {
-            let is_exit = match is_exit {
-                "1" => true,
-                "0" => false,
-                a => panic!(format!("uh oh: {}", a)),
+        let (is_exit, time) =
+            if let (Some(is_exit), Some(time)) = (parts.by_ref().next(), parts.by_ref().next()) {
+                let is_exit = match is_exit {
+                    "1" => true,
+                    "0" => false,
+                    a => panic!(format!("uh oh: {}", a)),
+                };
+
+                let time = time.parse::<f32>().unwrap();
+
+                (is_exit, time)
+            } else {
+                continue;
             };
-
-            let time = time.parse::<f32>().unwrap();
-
-            (is_exit, time)
-        } else {
-            continue;
-        };
 
         if is_exit && current_stack.is_empty() {
             eprintln!("[WARNING] Found function exit without corresponding entrance. Discarding line. Check your input.\n");
