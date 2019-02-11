@@ -5,24 +5,17 @@ use std::io::prelude::*;
 const SCALE_FACTOR: f32 = 1_000_000.0;
 static CALLS: &[&str] = &["require", "require_once", "include", "include_once"];
 
-#[derive(Debug, Default)]
-pub struct Options {
-    /// include TID and PID with process names [1]
-    pub invocation_count: bool,
-}
+pub struct Options;
 
 pub fn handle_file<R: BufRead, W: Write>(
-    opts: Options,
+    _opts: Options,
     mut reader: R,
     mut writer: W,
 ) -> io::Result<()> {
     let mut stacks: HashMap<String, f32> = HashMap::new();
     let mut current_stack = Vec::with_capacity(16);
-    let mut was_exit = false;
     let mut prev_start_time = 0.0;
     let mut line = String::new();
-
-    let invocation_count = !opts.invocation_count;
 
     loop {
         if reader.read_line(&mut line)? == 0 {
@@ -43,58 +36,46 @@ pub fn handle_file<R: BufRead, W: Write>(
             break;
         }
 
-        let parts = line.split('\t').collect::<Vec<&str>>();
+        let mut parts = line.split_whitespace().into_iter().skip(2);
 
-        if parts.len() < 4 {
+        let (is_exit, time) = if let (Some(is_exit), Some(time)) = (parts.by_ref().next(), parts.by_ref().next()) {
+            let is_exit = match is_exit {
+                "1" => true,
+                "0" => false,
+                a => panic!(format!("uh oh: {}", a)),
+            };
+
+            let time = time.parse::<f32>().unwrap();
+
+            (is_exit, time)
+        } else {
+            continue;
+        };
+
+        if is_exit && current_stack.is_empty() {
+            eprintln!("[WARNING] Found function exit without corresponding entrance. Discarding line. Check your input.\n");
             continue;
         }
 
-        let (is_exit, time) = (parts[2], parts[3]);
-        let time = time.parse::<f32>().unwrap();
-
-        let is_exit = match is_exit {
-            "1" => true,
-            "0" => false,
-            _ => panic!("uh oh"),
-        };
+        let collapsed = current_stack.join(";");
+        let duration = SCALE_FACTOR * (time - prev_start_time);
+        *stacks.entry(collapsed).or_insert(0.0) += duration;
 
         if is_exit {
-            if invocation_count {
-                if current_stack.is_empty() {
-                    println!("[WARNING] Found function exit without corresponding entrance. Discarding line. Check your input.\n");
-                    continue;
-                }
-
-                let collapsed = current_stack.join(";");
-                let duration = SCALE_FACTOR * (time - prev_start_time);
-                *stacks.entry(collapsed).or_insert(0.0) += duration;
-            } else {
-                if !was_exit {
-                    let collapsed = current_stack.join(";");
-                    *stacks.entry(collapsed).or_insert(0.0) += 1.0;
-                }
-                was_exit = true;
-            }
             current_stack.pop();
         } else {
-            let mut func_name = parts[5].to_owned();
+            let func_name = parts.by_ref().skip(1).next();
+            let path_name = parts.by_ref().skip(1).next();
 
-            if invocation_count {
-                if CALLS.contains(&parts[5]) {
-                    func_name.push_str(&format!("({})", parts[7]));
+            if let (Some(func_name), Some(path_name)) = (func_name, path_name) {
+                if CALLS.contains(&func_name) {
+                    current_stack.push(format!("{}({})", func_name.clone(), path_name.clone()));
+                } else {
+                    current_stack.push(format!("{}", func_name.clone()));
                 }
-
-                if !current_stack.is_empty() {
-                    let collapsed = current_stack.join(";");
-                    let duration = SCALE_FACTOR * (time - prev_start_time);
-                    *stacks.entry(collapsed).or_insert(0.0) += duration;
-                }
-            } else {
-                was_exit = false;
             }
-
-            current_stack.push(func_name);
         }
+
         prev_start_time = time;
     }
 

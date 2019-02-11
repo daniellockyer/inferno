@@ -1,3 +1,8 @@
+use std::alloc::System;
+
+#[global_allocator]
+static A: System = System;
+
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter};
 use structopt::StructOpt;
@@ -16,19 +21,13 @@ use inferno::collapse::xdebug::{handle_file, Options};
     If you save this output add --header on Linux >= 3.14 to include perf info."
 )]
 struct Opt {
-    /// Measure by invocation counts
-    #[structopt(long = "c")]
-    invocation_count: bool,
-
     /// perf script output file, or STDIN if not specified
     infile: Option<String>,
 }
 
 impl Into<Options> for Opt {
     fn into(self) -> Options {
-        Options {
-            invocation_count: self.invocation_count,
-        }
+        Options {}
     }
 }
 
