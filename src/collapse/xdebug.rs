@@ -1,4 +1,5 @@
 use hashbrown::HashMap;
+use std::fmt;
 use std::io::{self, Write};
 use std::io::prelude::*;
 use std::rc::Rc;
@@ -33,6 +34,11 @@ struct CallStack {
     interned: Vec<Call>,
 
     stack: Vec<usize>,
+}
+
+struct Frames<'a> {
+    calls: &'a CallStack,
+    stack: &'a [usize],
 }
 
 pub fn handle_file<R: BufRead, W: Write>(
@@ -118,9 +124,7 @@ pub fn handle_file<R: BufRead, W: Write>(
     }
 
     for (key, value) in stacks {
-        line.clear();
-        current_stack.write_name(&key, &mut line);
-        writeln!(writer, "{} {}", &line, value)?;
+        writeln!(writer, "{} {}", current_stack.frames(&key), value)?;
     }
 
     Ok(())
@@ -171,20 +175,6 @@ impl CallStack {
         self.stack.as_slice()
     }
 
-    /// Create a name for the current stack.
-    ///
-    /// This is potentially costly.
-    fn write_name(&self, indices: &[usize], buffer: &mut String) {
-        let mut indices = indices.iter().cloned();
-        if let Some(first) = indices.by_ref().next() {
-            self.write_call(self.interned[first], buffer);
-        }
-        while let Some(next) = indices.next() {
-            buffer.push(';');
-            self.write_call(self.interned[next], buffer);
-        }
-    }
-
     /// Intern a string, return the unique index.
     ///
     /// `Ok` when the string was already present.
@@ -218,17 +208,45 @@ impl CallStack {
         index
     }
 
-    fn write_call(&self, call: Call, buffer: &mut String) {
+    /// Prepare the stack frame for printing.
+    fn frames<'a>(&'a self, stack: &'a [usize]) -> Frames<'a> {
+        Frames {
+            calls: self,
+            stack,
+        }
+    }
+
+    /// Create a name for the current stack.
+    ///
+    /// This is potentially costly.
+    fn write_name(&self, indices: &[usize], buffer: &mut fmt::Formatter) -> fmt::Result {
+        let mut indices = indices.iter().cloned();
+        if let Some(first) = indices.by_ref().next() {
+            self.write_call(self.interned[first], buffer)?;
+        }
+        while let Some(next) = indices.next() {
+            buffer.write_str(";")?;
+            self.write_call(self.interned[next], buffer)?;
+        }
+        Ok(())
+    }
+
+    fn write_call(&self, call: Call, buffer: &mut fmt::Formatter) -> fmt::Result {
         match call {
-            Call::WithoutPath(Str(idx)) => buffer.push_str(&self.interned_string[idx]),
+            Call::WithoutPath(Str(idx)) => buffer.write_str(&self.interned_string[idx]),
             Call::WithPath(Str(name), Str(path)) => {
                 let (name, path) = (&self.interned_string[name], &self.interned_string[path]);
-                buffer.reserve(name.len() + path.len() + 2);
-                buffer.push_str(name);
-                buffer.push('(');
-                buffer.push_str(path);
-                buffer.push(')');
+                buffer.write_str(name)?;
+                buffer.write_str("(")?;
+                buffer.write_str(path)?;
+                buffer.write_str(")")
             },
         }
+    }
+}
+
+impl<'a> fmt::Display for Frames<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.calls.write_name(self.stack, f)
     }
 }
