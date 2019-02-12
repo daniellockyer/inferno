@@ -1,11 +1,11 @@
-use hashbrown::HashMap;
 use hashbrown::hash_map::RawEntryMut;
-use std::fmt;
-use std::io::{self, Write};
-use std::io::prelude::*;
-use std::hash::{BuildHasher, Hash, Hasher};
-use std::rc::Rc;
+use hashbrown::HashMap;
 use regex::Regex;
+use std::fmt;
+use std::hash::{BuildHasher, Hash, Hasher};
+use std::io::prelude::*;
+use std::io::{self, Write};
+use std::rc::Rc;
 
 const SCALE_FACTOR: f32 = 1_000_000.0;
 static CALLS: &[&str] = &["require", "require_once", "include", "include_once"];
@@ -109,9 +109,14 @@ pub fn handle_file<R: BufRead, W: Write>(
             current.hash(&mut hasher);
             let hash = hasher.finish();
 
-            match stacks.raw_entry_mut().from_key_hashed_nocheck(hash, current) {
+            match stacks
+                .raw_entry_mut()
+                .from_key_hashed_nocheck(hash, current)
+            {
                 RawEntryMut::Occupied(mut occ) => *occ.get_mut() += duration,
-                RawEntryMut::Vacant(vacant) => { vacant.insert_hashed_nocheck(hash, Box::from(current), duration); },
+                RawEntryMut::Vacant(vacant) => {
+                    vacant.insert_hashed_nocheck(hash, Box::from(current), duration);
+                }
             }
         }
 
@@ -139,14 +144,12 @@ pub fn handle_file<R: BufRead, W: Write>(
 impl CallStack {
     fn new() -> Self {
         CallStack {
-            strings: CALLS.iter()
+            strings: CALLS
+                .iter()
                 .enumerate()
                 .map(|(idx, name)| (name.to_owned().into(), idx))
                 .collect(),
-            interned_string: CALLS.iter()
-                .cloned()
-                .map(Rc::from)
-                .collect(),
+            interned_string: CALLS.iter().cloned().map(Rc::from).collect(),
             calls: HashMap::new(),
             interned: Vec::new(),
             stack: Vec::with_capacity(16),
@@ -155,11 +158,9 @@ impl CallStack {
 
     fn call(&mut self, name: &str, path: &str) {
         let new_or_not = match self.intern_str(name) {
-            Interned::Old(st @ Str(0..=4)) => {
-                match self.intern_str(path) {
-                    Interned::Old(other) => Interned::Old(Call::WithPath(st, other)),
-                    Interned::New(new) => Interned::New(Call::WithPath(st, new)),
-                }
+            Interned::Old(st @ Str(0..=4)) => match self.intern_str(path) {
+                Interned::Old(other) => Interned::Old(Call::WithPath(st, other)),
+                Interned::New(new) => Interned::New(Call::WithPath(st, new)),
             },
             Interned::Old(other) => Interned::Old(Call::WithoutPath(other)),
             Interned::New(new) => Interned::New(Call::WithoutPath(new)),
@@ -189,7 +190,9 @@ impl CallStack {
         string.hash(&mut hasher);
         let hash = hasher.finish();
 
-        let entry = self.strings.raw_entry_mut()
+        let entry = self
+            .strings
+            .raw_entry_mut()
             .from_key_hashed_nocheck(hash, string);
 
         let vacant = match entry {
@@ -209,10 +212,12 @@ impl CallStack {
             // The strings were not seen before, definitely new.
             Interned::New(t) => t,
             // The strings used were seen before, but maybe not in this call. So retest.
-            Interned::Old(t) => if let Some(idx) = self.calls.get(&t) {
-                return *idx;
-            } else {
-                t
+            Interned::Old(t) => {
+                if let Some(idx) = self.calls.get(&t) {
+                    return *idx;
+                } else {
+                    t
+                }
             }
         };
 
@@ -224,10 +229,7 @@ impl CallStack {
 
     /// Prepare the stack frame for printing.
     fn frames<'a>(&'a self, stack: &'a [usize]) -> Frames<'a> {
-        Frames {
-            calls: self,
-            stack,
-        }
+        Frames { calls: self, stack }
     }
 
     /// Create a name for the current stack.
@@ -254,7 +256,7 @@ impl CallStack {
                 buffer.write_str("(")?;
                 buffer.write_str(path)?;
                 buffer.write_str(")")
-            },
+            }
         }
     }
 }
