@@ -47,6 +47,10 @@ struct Frames<'a> {
 }
 
 /// Iterate over tab separated fields.
+///
+/// This is essentially the same as `str.split('\t').filter(|slice| slice.len() > 0)` but seemingly
+/// faster. This probably because we know that the character in question is ascii, while the
+/// standard library `StrSearcher` for `char` is not optimized around this case.
 struct Fields<'a> {
     line: &'a str,
 }
@@ -56,6 +60,7 @@ pub fn handle_file<R: BufRead, W: Write>(
     mut reader: R,
     mut writer: W,
 ) -> io::Result<()> {
+    // Timings for all call stacks in total.
     let mut stacks: HashMap<_, f32> = HashMap::new();
     let mut current_stack = CallStack::new();
     let mut prev_start_time = 0.0;
@@ -84,22 +89,22 @@ pub fn handle_file<R: BufRead, W: Write>(
             break;
         }
 
+        // Break the line into tab separated tokens.
         let mut parts = Fields::new(&line).skip(2);
 
-        let (is_exit, time) =
-            if let (Some(is_exit), Some(time)) = (parts.next(), parts.next()) {
-                let is_exit = match is_exit {
-                    "1" => true,
-                    "0" => false,
-                    a => panic!(format!("uh oh: {}", a)),
-                };
-
-                let time = time.parse::<f32>().unwrap();
-
-                (is_exit, time)
-            } else {
-                continue;
+        let (is_exit, time) = if let (Some(is_exit), Some(time)) = (parts.next(), parts.next()) {
+            let is_exit = match is_exit {
+                "1" => true,
+                "0" => false,
+                a => panic!(format!("uh oh: {}", a)),
             };
+
+            let time = time.parse::<f32>().unwrap();
+
+            (is_exit, time)
+        } else {
+            continue;
+        };
 
         if is_exit && current_stack.is_empty() {
             eprintln!("[WARNING] Found function exit without corresponding entrance. Discarding line. Check your input.\n");
@@ -110,6 +115,7 @@ pub fn handle_file<R: BufRead, W: Write>(
             let current = current_stack.current();
             let duration = SCALE_FACTOR * (time - prev_start_time);
 
+            // hash `current` for lookup and insertion.
             let mut hasher = stacks.hasher().build_hasher();
             current.hash(&mut hasher);
             let hash = hasher.finish();
@@ -120,6 +126,7 @@ pub fn handle_file<R: BufRead, W: Write>(
             {
                 RawEntryMut::Occupied(mut occ) => *occ.get_mut() += duration,
                 RawEntryMut::Vacant(vacant) => {
+                    // `Box<str>` has same hash as `str`.
                     vacant.insert_hashed_nocheck(hash, Box::from(current), duration);
                 }
             }
@@ -149,7 +156,10 @@ pub fn handle_file<R: BufRead, W: Write>(
 }
 
 impl CallStack {
-    fn new() -> Self {
+    /// Create a function name interning call stack tracker.
+    ///
+    /// Popoulated with the constant builtins for inclusion, to enable a faster comparison.
+    pub fn new() -> Self {
         CallStack {
             strings: CALLS
                 .iter()
@@ -163,7 +173,8 @@ impl CallStack {
         }
     }
 
-    fn call(&mut self, name: &str, path: &str) {
+    /// Push a `call` line on top of the stack.
+    pub fn call(&mut self, name: &str, path: &str) {
         let new_or_not = match self.intern_str(name) {
             Interned::Old(st @ Str(0..=4)) => match self.intern_str(path) {
                 Interned::Old(other) => Interned::Old(Call::WithPath(st, other)),
@@ -177,14 +188,17 @@ impl CallStack {
         self.stack.push(idx)
     }
 
-    fn pop(&mut self) {
+    /// Pop one call from the current stack.
+    pub fn pop(&mut self) {
         self.stack.pop();
     }
 
+    /// An empty stack means we finished main.
     fn is_empty(&self) -> bool {
         self.stack.is_empty()
     }
 
+    /// Get a comparable, hashable representation of the call stack. of the call stack.
     fn current(&self) -> &[usize] {
         self.stack.as_slice()
     }
@@ -214,6 +228,10 @@ impl CallStack {
         Interned::New(Str(index))
     }
 
+    /// Intern a `Call` into a `usize` index.
+    ///
+    /// Some tests revealed that this was faster than comparing the `Call` instances directly, so
+    /// it was kept. This seems a bit odd but was backed by data at the time.
     fn intern(&mut self, call: Interned<Call>) -> usize {
         let new = match call {
             // The strings were not seen before, definitely new.
@@ -254,6 +272,7 @@ impl CallStack {
         Ok(())
     }
 
+    /// Format a single call.
     fn write_call(&self, call: Call, buffer: &mut fmt::Formatter) -> fmt::Result {
         match call {
             Call::WithoutPath(Str(idx)) => buffer.write_str(&self.interned_string[idx]),
@@ -276,9 +295,7 @@ impl<'a> fmt::Display for Frames<'a> {
 
 impl<'a> Fields<'a> {
     pub fn new(line: &'a str) -> Self {
-        Fields {
-            line,
-        }
+        Fields { line }
     }
 }
 
@@ -286,7 +303,9 @@ impl<'a> Iterator for Fields<'a> {
     type Item = &'a str;
 
     fn next(&mut self) -> Option<&'a str> {
-        let begin = self.line.as_bytes()
+        let begin = self
+            .line
+            .as_bytes()
             .iter()
             .cloned()
             .position(|b| b != b'\t')
@@ -294,10 +313,12 @@ impl<'a> Iterator for Fields<'a> {
 
         self.line = &self.line[begin..];
         if self.line.len() == 0 {
-            return None
+            return None;
         }
 
-        let end = self.line.as_bytes()
+        let end = self
+            .line
+            .as_bytes()
             .iter()
             .cloned()
             .position(|b| b == b'\t')
