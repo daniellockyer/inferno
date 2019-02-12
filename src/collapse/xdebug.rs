@@ -1,14 +1,17 @@
 use hashbrown::hash_map::RawEntryMut;
 use hashbrown::HashMap;
-use regex::Regex;
 use std::fmt;
 use std::hash::{BuildHasher, Hash, Hasher};
 use std::io::prelude::*;
 use std::io::{self, Write};
 use std::rc::Rc;
+// Ideas: str_stack and colosseum to keep allocations closer together or something.
 
 const SCALE_FACTOR: f32 = 1_000_000.0;
 static CALLS: &[&str] = &["require", "require_once", "include", "include_once"];
+
+const TRACE_START: &str = "TRACE START";
+const TRACE_END: &str = "TRACE END";
 
 pub struct Options;
 
@@ -43,6 +46,11 @@ struct Frames<'a> {
     stack: &'a [usize],
 }
 
+/// Iterate over tab separated fields.
+struct Fields<'a> {
+    line: &'a str,
+}
+
 pub fn handle_file<R: BufRead, W: Write>(
     _opts: Options,
     mut reader: R,
@@ -53,15 +61,12 @@ pub fn handle_file<R: BufRead, W: Write>(
     let mut prev_start_time = 0.0;
     let mut line = String::new();
 
-    let searcher = Regex::new("TRACE START").unwrap();
-    let end_searcher = Regex::new("TRACE END").unwrap();
-
     loop {
         if reader.read_line(&mut line)? == 0 {
             break;
         }
 
-        if searcher.is_match(&line) {
+        if line.starts_with(TRACE_START) {
             break;
         }
 
@@ -75,14 +80,14 @@ pub fn handle_file<R: BufRead, W: Write>(
             break;
         }
 
-        if end_searcher.is_match(&line) {
+        if line.starts_with(TRACE_END) {
             break;
         }
 
-        let mut parts = line.split_whitespace().into_iter().skip(2);
+        let mut parts = Fields::new(&line).skip(2);
 
         let (is_exit, time) =
-            if let (Some(is_exit), Some(time)) = (parts.by_ref().next(), parts.by_ref().next()) {
+            if let (Some(is_exit), Some(time)) = (parts.next(), parts.next()) {
                 let is_exit = match is_exit {
                     "1" => true,
                     "0" => false,
@@ -123,8 +128,10 @@ pub fn handle_file<R: BufRead, W: Write>(
         if is_exit {
             current_stack.pop();
         } else {
-            let func_name = parts.by_ref().skip(1).next();
-            let path_name = parts.by_ref().skip(1).next();
+            let _ = parts.next();
+            let func_name = parts.next();
+            let _ = parts.next();
+            let path_name = parts.next();
 
             if let (Some(func_name), Some(path_name)) = (func_name, path_name) {
                 current_stack.call(func_name, path_name);
@@ -264,5 +271,39 @@ impl CallStack {
 impl<'a> fmt::Display for Frames<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.calls.write_name(self.stack, f)
+    }
+}
+
+impl<'a> Fields<'a> {
+    pub fn new(line: &'a str) -> Self {
+        Fields {
+            line,
+        }
+    }
+}
+
+impl<'a> Iterator for Fields<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<&'a str> {
+        let begin = self.line.as_bytes()
+            .iter()
+            .cloned()
+            .position(|b| b != b'\t')
+            .unwrap_or(self.line.len());
+
+        self.line = &self.line[begin..];
+        if self.line.len() == 0 {
+            return None
+        }
+
+        let end = self.line.as_bytes()
+            .iter()
+            .cloned()
+            .position(|b| b == b'\t')
+            .unwrap_or(self.line.len());
+        let (result, next) = self.line.split_at(end);
+        self.line = next;
+        Some(result)
     }
 }
