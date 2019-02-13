@@ -265,7 +265,7 @@ impl CallStack {
         if let Some(first) = indices.by_ref().next() {
             self.write_call(self.interned[first], buffer)?;
         }
-        while let Some(next) = indices.next() {
+        for next in indices {
             buffer.write_str(";")?;
             self.write_call(self.interned[next], buffer)?;
         }
@@ -309,10 +309,10 @@ impl<'a> Iterator for Fields<'a> {
             .iter()
             .cloned()
             .position(|b| b != b'\t')
-            .unwrap_or(self.line.len());
+            .unwrap_or_else(|| self.line.len());
 
         self.line = &self.line[begin..];
-        if self.line.len() == 0 {
+        if self.line.is_empty() {
             return None;
         }
 
@@ -322,7 +322,7 @@ impl<'a> Iterator for Fields<'a> {
             .iter()
             .cloned()
             .position(|b| b == b'\t')
-            .unwrap_or(self.line.len());
+            .unwrap_or_else(|| self.line.len());
         let (result, next) = self.line.split_at(end);
         self.line = next;
         Some(result)
