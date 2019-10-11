@@ -39,7 +39,7 @@ quick-xml = { version = "0.15", default-features = false }
 rand = "0.7"
 rgb = "0.8.13"
 str_stack = "0.1"
-structopt = { version = "0.2", optional = true }
+structopt = { version = "0.3", optional = true }
 symbolic-demangle = "6.1.3"
 
 [dev-dependencies]
